@@ -69,6 +69,7 @@ urls = df["href"].values.tolist()
 # Get URL Info
 def get_url(target_url):
     driver.get(target_url)
+    driver.wait(4)
     dictionary = {
         "company": None, "phone": None, "telephone": None, "wechat": None, "email": None, "location": None
     }
@@ -81,6 +82,7 @@ def get_url(target_url):
         "location": '.lh16 map listFlex'
     }
     for k, v in dictionary_ele.items():
+        driver.wait.ele_loaded(v)
         ele = driver.s_ele(v)
         if ele:
             if k == "company":
@@ -92,5 +94,6 @@ def get_url(target_url):
     return dictionary
 
 
+# Save DataFrame
 pd.DataFrame([get_url(url) for url in tqdm(urls)]).to_csv("ywg_data.csv", index=False)
 driver.quit()
