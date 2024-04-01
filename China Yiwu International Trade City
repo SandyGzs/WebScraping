@@ -1,3 +1,4 @@
+"""
 Objective: finding all store contact informations for any store in 
 (1) "https://www.yiwugo.com/shop_list/i_1_1003.html" China Yiwu International Trade City Phase III
 (2) "https://www.yiwugo.com/shop_list/i_1_1001.html" China Yiwu International Trade City Phase I 3rd & 4th floor 
@@ -8,36 +9,53 @@ Difficulty:
 (1) if visiting speed is faster than 4s per refresh, browser is located and forced login + text verification are triggered [future goals]
 (2) limited search results: i. search subpages ii. find open api endpoints
 
-Version I
 Please prepare the setup of DrissionPage and Chrome
 """
+
+# Version I
+# Import Packages
 from DrissionPage import ChromiumPage, ChromiumOptions 
 import pandas as pd
 from tqdm import tqdm
 
+# Prepare Chrome
 co = ChromiumOptions().auto_port()
 co.headless()
-chrome = ChromiumPage(co)
-driver = chrome.new_tab()
-title, href = [], []
+driver = ChromiumPage(co)
+
+# Choose which url groups you need - let's use Objective (2) as an example
+driver.get("https://www.yiwugo.com/shop_list/i_1_1001.html")
+urls = [ 
+    ele.attr("href")
+    for ele in driver.s_ele(".markets-wrap").children() 
+    if ele.attr("href").startswith("https://www.yiwugo.com/shop_list/i_1_1001_3") or ele.attr("href").startswith("https://www.yiwugo.com/shop_list/i_1_1001_4")
+]
+
+
+# Core Action: Get Data
+def getData(chrome_driver):
+    driver.wait.ele_loaded(".shop-list")
+    return pd.DataFrame([
+        {"title": pic.s_ele(".shop-name").attr("title"), "href": pic.s_ele(".shop-name").attr("href")} 
+        for pic in driver.s_ele(".shop-list").children() 
+        if pic.attr("class") == 'pro_list_company_img'
+    ])
+
+
+# Start WebScraping
+dfs = []
 for url in tqdm(urls):
     driver.get(url)
-    driver.wait.ele_loaded(".ant-pagination-simple-pager", timeout=60)
+    driver.wait.ele_loaded(".ant-pagination-simple-pager")
     pages = driver.s_ele(".ant-pagination-simple-pager")
     pages = int(driver.s_ele(".ant-pagination-simple-pager").attr("title").split("/")[1]) - 1 if pages else 0
-    driver.wait.ele_loaded(".shop-list", timeout=60)
-    for pic in driver.s_ele(".shop-list").children():
-        if pic.attr("class") == 'pro_list_company_img':
-            title.append(pic.s_ele(".shop-name").attr("title"))
-            href.append(pic.s_ele(".shop-name").attr("href"))
+    dfs.append(getData(driver))
     if pages > 1:
         for _ in range(pages):
             driver.wait(5)
-            driver.wait.ele_loaded(". ant-pagination-next", timeout=60)
+            driver.wait.ele_loaded(". ant-pagination-next")
             driver.ele(". ant-pagination-next").click()
-            driver.wait.ele_loaded(".shop-list", timeout=60)
-            for pic in driver.s_ele(".shop-list").children():
-                if pic.attr("class") == 'pro_list_company_img':
-                    title.append(pic.s_ele(".shop-name").attr("title"))
-                    href.append(pic.s_ele(".shop-name").attr("href"))
-"""
+            dfs.append(getData(driver))
+
+pd.concat(dfs).to_csv("ywg_targets.csv")
+chrome.quit()
