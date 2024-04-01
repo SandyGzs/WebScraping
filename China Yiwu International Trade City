@@ -58,5 +58,5 @@ for url in tqdm(urls):
             driver.ele(". ant-pagination-next").click()
             dfs.append(getData(driver))
 
-pd.concat(dfs).to_csv("ywg_targets.csv")
-chrome.quit()
+pd.concat(dfs).to_csv("ywg_targets.csv", index=False)
+driver.quit()
