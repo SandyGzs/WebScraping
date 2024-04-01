@@ -1,0 +1,43 @@
+Objective: finding all store contact informations for any store in 
+(1) "https://www.yiwugo.com/shop_list/i_1_1003.html" China Yiwu International Trade City Phase III
+(2) "https://www.yiwugo.com/shop_list/i_1_1001.html" China Yiwu International Trade City Phase I 3rd & 4th floor 
+
+It's very easy to see that the url is in the format f"https://www.yiwugo.com/shop_list/i_1_100{floor_number}" where floor number can be 1, 2, 3 or more.
+
+Difficulty:
+(1) if visiting speed is faster than 4s per refresh, browser is located and forced login + text verification are triggered [future goals]
+(2) limited search results: i. search subpages ii. find open api endpoints
+
+Version I
+Please prepare the setup of DrissionPage and Chrome
+"""
+from DrissionPage import ChromiumPage, ChromiumOptions 
+import pandas as pd
+from tqdm import tqdm
+
+co = ChromiumOptions().auto_port()
+co.headless()
+chrome = ChromiumPage(co)
+driver = chrome.new_tab()
+title, href = [], []
+for url in tqdm(urls):
+    driver.get(url)
+    driver.wait.ele_loaded(".ant-pagination-simple-pager", timeout=60)
+    pages = driver.s_ele(".ant-pagination-simple-pager")
+    pages = int(driver.s_ele(".ant-pagination-simple-pager").attr("title").split("/")[1]) - 1 if pages else 0
+    driver.wait.ele_loaded(".shop-list", timeout=60)
+    for pic in driver.s_ele(".shop-list").children():
+        if pic.attr("class") == 'pro_list_company_img':
+            title.append(pic.s_ele(".shop-name").attr("title"))
+            href.append(pic.s_ele(".shop-name").attr("href"))
+    if pages > 1:
+        for _ in range(pages):
+            driver.wait(5)
+            driver.wait.ele_loaded(". ant-pagination-next", timeout=60)
+            driver.ele(". ant-pagination-next").click()
+            driver.wait.ele_loaded(".shop-list", timeout=60)
+            for pic in driver.s_ele(".shop-list").children():
+                if pic.attr("class") == 'pro_list_company_img':
+                    title.append(pic.s_ele(".shop-name").attr("title"))
+                    href.append(pic.s_ele(".shop-name").attr("href"))
+"""
