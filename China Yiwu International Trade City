@@ -58,5 +58,39 @@ for url in tqdm(urls):
             driver.ele(". ant-pagination-next").click()
             dfs.append(getData(driver))
 
+# Save DataFrame
 pd.concat(dfs).to_csv("ywg_targets.csv", index=False)
+
+# Get Stored Data
+df = pd.read_csv("ywg_targets.csv")
+urls = df["href"].values.tolist()
+
+
+# Get URL Info
+def get_url(target_url):
+    driver.get(target_url)
+    dictionary = {
+        "company": None, "phone": None, "telephone": None, "wechat": None, "email": None, "location": None
+    }
+    dictionary_ele = {
+        "company": '.temp-company-v', 
+        "phone": '.iconfont iconshouji1', 
+        "telephone": '.iconfont icondianhua-F', 
+        "wechat": '.anticon anticon-wechat', 
+        "email": '.iconfont iconxinfengtianchong', 
+        "location": '.lh16 map listFlex'
+    }
+    for k, v in dictionary_ele.items():
+        ele = driver.s_ele(v)
+        if ele:
+            if k == "company":
+                dictionary[k] = ele.child(1).text
+            elif k == "location":
+                dictionary[k] = ele.text
+            else:
+                dictionary[k] = ele.parent(1).text
+    return dictionary
+
+
+pd.DataFrame([get_url(url) for url in tqdm(urls)]).to_csv("ywg_data.csv", index=False)
 driver.quit()
