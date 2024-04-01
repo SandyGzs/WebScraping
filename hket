@@ -1,6 +1,6 @@
 """
 https://ps.hket.com/srde005/二手成交紀錄_地產代理
-It is very easy when we observe there is an exposed graphql
+It is very easy when we observe there is an exposed graphql in the network section of dev tool bar.
 """
 
 import requests
