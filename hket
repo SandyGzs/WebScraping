@@ -1,0 +1,108 @@
+"""
+https://ps.hket.com/srde005/二手成交紀錄_地產代理
+It is very easy when we observe there is an exposed graphql
+"""
+
+import requests
+from pandas import json_normalize
+import json
+import pandas as pd
+from tqdm import tqdm
+import warnings
+
+# no warnings
+warnings.simplefilter(action='ignore', category=FutureWarning)
+
+# fully expend
+pd.set_option('display.max_rows', 500)
+pd.set_option('display.max_columns', 500)
+pd.set_option('display.width', 1000)
+
+# prepare post requests
+page = 0
+url = "https://ps.hket.com/internal-apisix/hket-property-prod/graphql"
+query = """
+            query getTransactionAgent(
+                $buildingName: String
+                $limit: Int
+                $page: Int
+                $projectSort: [SORT]
+                $recordDate: [String]
+                $rentPrice: [Float]
+                $sellPrice: [Float]
+                $sort: [SORT]
+                $subDistrict: [String]
+                $transactionType: [TransactionType]
+            ) {
+                transactionAgent(
+                    buildingName: $buildingName
+                    limit: $limit
+                    page: $page
+                    projectSort: $projectSort
+                    recordDate: $recordDate
+                    rentPrice: $rentPrice
+                    sellPrice: $sellPrice
+                    sort: $sort
+                    subDistrict: $subDistrict
+                    transactionType: $transactionType
+                ) {
+                    items {
+                        agent
+                        flatInfo
+                        flatTotalBedroom
+                        flatView
+                        floor
+                        grossArea
+                        grossPrice
+                        grossRentPrice
+                        project {
+                            projectChineseName
+                            projectSubDistrict
+                        }
+                        recordDate
+                        recordId
+                        rentPrice
+                        saleableArea
+                        saleablePrice
+                        saleableRentPrice
+                        sellPrice
+                        type
+                        unit
+                    }
+                    totalPages
+                }
+            }
+        """
+variables = {
+    "transactionType": ["SELL", "RENT"],
+    "sellPrice": [0, 100000000],
+    "rentPrice": [0, 250000],
+    "page": page,
+    "limit": 1000  # you can change it
+}
+sort = [{"field": "recordDate", "order": "desc"}, {"field": "recordId", "order": "asc"}]
+response = requests.post(url=url, json={
+    "query": query, "variables": variables, "sort": sort
+})
+df = json_normalize(json.loads(response.text)["data"]["transactionAgent"]["items"])
+total_pages = json.loads(response.text)["data"]["transactionAgent"]["totalPages"]
+for p in tqdm(range(1, total_pages)):
+    page = p+1
+    variables = {
+        "transactionType": ["SELL", "RENT"],
+        "sellPrice": [0, 100000000],
+        "rentPrice": [0, 250000],
+        "page": page,
+        "limit": 1000  # you can change it
+    }
+    response = requests.post(url=url, json={
+        "query": query, "variables": variables, "sort": sort
+    })
+    tmp = json_normalize(json.loads(response.text)["data"]["transactionAgent"]["items"])
+    if tmp.empty:
+        print(response.text)
+        break
+    else:
+        df = pd.concat([df, tmp]).drop_duplicates()
+df.reset_index()
+df.to_csv("data.csv", index=False)
