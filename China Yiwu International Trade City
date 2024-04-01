@@ -17,6 +17,7 @@ Please prepare the setup of DrissionPage and Chrome
 from DrissionPage import ChromiumPage, ChromiumOptions 
 import pandas as pd
 from tqdm import tqdm
+import re
 
 # Prepare Chrome
 co = ChromiumOptions().auto_port()
@@ -28,7 +29,7 @@ driver.get("https://www.yiwugo.com/shop_list/i_1_1001.html")
 urls = [ 
     ele.attr("href")
     for ele in driver.s_ele(".markets-wrap").children() 
-    if ele.attr("href").startswith("https://www.yiwugo.com/shop_list/i_1_1001_3") or ele.attr("href").startswith("https://www.yiwugo.com/shop_list/i_1_1001_4")
+    if ele.attr("href") and re.compile(r"https://www.yiwugo.com/shop_list/i_1_1001_(3|4)").match(ele.attr("href")) 
 ]
 
 
