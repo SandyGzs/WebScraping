@@ -26,6 +26,7 @@ driver = ChromiumPage(co)
 
 # Choose which url groups you need - let's use Objective (2) as an example
 driver.get("https://www.yiwugo.com/shop_list/i_1_1001.html")
+driver.wait.ele_loaded(".markets-wrap")
 urls = [ 
     ele.attr("href")
     for ele in driver.s_ele(".markets-wrap").children() 
