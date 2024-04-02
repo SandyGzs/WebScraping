@@ -1,0 +1,97 @@
+"""
+To start we’re looking for college basketball data including scores from historical seasons, player specific stats, and rosters.
+"""
+
+from DrissionPage import ChromiumPage, ChromiumOptions
+import pandas as pd
+from tqdm import tqdm
+from random_user_agent.user_agent import UserAgent
+from random_user_agent.params import SoftwareName, OperatingSystem
+from io import StringIO
+from concurrent.futures import ThreadPoolExecutor
+
+# Prepare User Agents
+software_names = [SoftwareName.CHROME.value]
+operating_systems = [OperatingSystem.WINDOWS.value]
+user_agent_rotator = UserAgent(software_names=software_names, operating_systems=operating_systems, limit=100)
+
+
+# Team Stats
+def get_stats(season_number, category):
+    # category can be player|team
+    co = ChromiumOptions().auto_port()
+    co.headless()
+    co.set_user_agent(user_agent=user_agent_rotator.get_random_user_agent())
+    driver = ChromiumPage(co)
+    url = f"https://www.espn.com/mens-college-basketball/stats/{category}/_/season/{season_number}"
+    driver.get(url)
+    while True:
+        driver.wait.ele_loaded("Show More")
+        if driver.s_ele("Show More"):
+            driver.ele("Show More").click()
+        else:
+            break
+    if driver.s_ele(".Table Table--align-right Table--fixed Table--fixed-left") and driver.s_ele(".Table__ScrollerWrapper relative overflow-hidden"):
+        df = pd.concat(
+            pd.read_html(driver.s_ele(".Table Table--align-right Table--fixed Table--fixed-left").html) +
+            pd.read_html(driver.s_ele(".Table__ScrollerWrapper relative overflow-hidden").html), axis=1)
+        driver.quit()
+        return df
+    else:
+        driver.quit()
+        get_stats(season_number, category)  # retries
+
+
+def get_roster_links():
+    co = ChromiumOptions().auto_port()
+    co.headless()
+    co.set_user_agent(user_agent=user_agent_rotator.get_random_user_agent())
+    driver = ChromiumPage(co)
+    driver.get("https://www.espn.com/mens-college-basketball/teams")
+    driver.wait.ele_loaded(".TeamLinks__Link n9 nowrap")
+    if driver.s_eles(".TeamLinks__Link n9 nowrap"):
+        df = [
+            child.s_ele(".AnchorLink").attr("href")
+            for child in driver.s_eles(".TeamLinks__Link n9 nowrap")
+            if child.text == "Roster"
+        ]
+        driver.quit()
+        return df
+    else:
+        driver.quit()
+        get_roster_links()  # retries
+
+
+def get_roster(roster_link):
+    co = ChromiumOptions().auto_port()
+    co.headless()
+    co.set_user_agent(user_agent=user_agent_rotator.get_random_user_agent())
+    driver = ChromiumPage(co)
+    driver.get(roster_link)
+    driver.wait.ele_loaded(".Roster__Heading")
+    driver.wait.ele_loaded(".Table__Scroller")
+    if driver.s_ele(".Roster__Heading") and driver.s_ele(".Table__Scroller"):
+        df = pd.read_html(StringIO(driver.s_ele(".Table__Scroller").html))[0][["Name", "POS", "HT", "WT", "Class", "Birthplace"]]
+        df["Roster"] = driver.s_ele(".Roster__Heading").text
+        driver.quit()
+        return df
+    else:
+        driver.quit()
+        get_roster(roster_link)  # retries
+
+
+# I just need to submit a demo 2024 but you can extend to all historical records.
+# Player
+get_stats(2024, "player").to_csv("player_2023-2024.csv", index=False)
+
+# Team
+get_stats(2024, "team").to_csv("team_2023-2024.csv", index=False)
+
+# Roster
+urls = get_roster_links()
+stack = []
+with ThreadPoolExecutor(max_workers=3) as executor:
+    stack = list(tqdm(executor.map(get_roster, urls), total=len(urls)))
+
+# Save DataFrame
+pd.concat(stack).to_csv("roster_2023-2024.csv", index=False)
