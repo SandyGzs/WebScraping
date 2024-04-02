@@ -121,7 +121,7 @@ def get_url(target_url):
 
 
 # Process
-with ThreadPoolExecutor(max_workers=5) as executor:
+with ThreadPoolExecutor(max_workers=3) as executor:
     stack = list(tqdm(executor.map(get_url, urls), total=len(urls)))
 
 # Save DataFrame
