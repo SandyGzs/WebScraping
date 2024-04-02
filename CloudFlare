@@ -1,0 +1,16 @@
+from DrissionPage import ChromiumPage, ChromiumOptions
+
+# RedBubble
+co = ChromiumOptions().auto_port()
+co.incognito()  # 匿名模式
+# co.headless()  # 无头模式
+driver = ChromiumPage(co)
+driver.get("https://www.redbubble.com/")
+
+# CloudFlare
+driver.wait.ele_loaded('#turnstile-wrapper')
+cloudflare = driver.ele('#turnstile-wrapper')
+if cloudflare:
+    iframe = cloudflare.child(1).child(1)
+    iframe = driver.get_frame(iframe)
+    iframe('xpath://*[@id="challenge-stage"]/div/label/input').click()
