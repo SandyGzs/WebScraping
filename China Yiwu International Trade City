@@ -116,6 +116,7 @@ def get_url(target_url):
                 dictionary[k] = ele.text
             else:
                 dictionary[k] = ele.parent(1).text
+    driver.quit()
     return dictionary
 
 
@@ -125,4 +126,3 @@ with ThreadPoolExecutor(max_workers=5) as executor:
 
 # Save DataFrame
 pd.DataFrame(stack).to_csv("ywg_data.csv", index=False)
-driver.quit()
