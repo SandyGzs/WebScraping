@@ -6,7 +6,7 @@ Objective: finding all store contact informations for any store in
 It's very easy to see that the url is in the format f"https://www.yiwugo.com/shop_list/i_1_100{floor_number}" where floor number can be 1, 2, 3 or more.
 
 Difficulty:
-(1) if visiting speed is faster than 4s per refresh, browser is located and forced login + text verification are triggered [future goals]
+(1) if visiting speed is faster than 4s per refresh, browser is located and forced login + text verification are triggered [future goals] -> user-agent recognization
 (2) limited search results: i. search subpages ii. find open api endpoints
 
 Please prepare the setup of DrissionPage and Chrome
@@ -18,11 +18,19 @@ from DrissionPage import ChromiumPage, ChromiumOptions
 import pandas as pd
 from tqdm import tqdm
 import re
+from random_user_agent.user_agent import UserAgent
+from random_user_agent.params import SoftwareName, OperatingSystem
+from concurrent.futures import ThreadPoolExecutor
 
 # Prepare Chrome
 co = ChromiumOptions().auto_port()
 co.headless()
 driver = ChromiumPage(co)
+
+# Prepare User Agents
+software_names = [SoftwareName.CHROME.value]
+operating_systems = [OperatingSystem.MAC.value]   
+user_agent_rotator = UserAgent(software_names=software_names, operating_systems=operating_systems, limit=100)
 
 # Choose which url groups you need - let's use Objective (2) as an example
 driver.get("https://www.yiwugo.com/shop_list/i_1_1001.html")
@@ -32,45 +40,61 @@ urls = [
     for ele in driver.s_ele(".markets-wrap").children() 
     if ele.attr("href") and re.compile(r"https://www.yiwugo.com/shop_list/i_1_1001_(3|4)").match(ele.attr("href")) 
 ]
+driver.quit()
 
 
 # Core Action: Get Data
 def getData(chrome_driver):
-    driver.wait.ele_loaded(".shop-list")
+    chrome_driver.wait.ele_loaded(".shop-list")
     return pd.DataFrame([
         {"title": pic.s_ele(".shop-name").attr("title"), "href": pic.s_ele(".shop-name").attr("href")} 
-        for pic in driver.s_ele(".shop-list").children() 
+        for pic in chrome_driver.s_ele(".shop-list").children() 
         if pic.attr("class") == 'pro_list_company_img'
     ])
 
 
-# Start WebScraping
-dfs = []
-for url in tqdm(urls):
-    driver.get(url)
+# Finish Each Loop
+def loop_url(target_url):
+    tmp = []
+    co = ChromiumOptions().auto_port()
+    co.set_user_agent(user_agent=user_agent_rotator.get_random_user_agent())
+    co.headless()
+    driver = ChromiumPage(co)
+    driver.get(target_url)
     driver.wait.ele_loaded(".ant-pagination-simple-pager")
     pages = driver.s_ele(".ant-pagination-simple-pager")
     pages = int(driver.s_ele(".ant-pagination-simple-pager").attr("title").split("/")[1]) - 1 if pages else 0
-    dfs.append(getData(driver))
+    tmp.append(getData(driver))
     if pages > 1:
         for _ in range(pages):
             driver.wait(5)
             driver.wait.ele_loaded(". ant-pagination-next")
             driver.ele(". ant-pagination-next").click()
-            dfs.append(getData(driver))
+            tmp.append(getData(driver))
+    driver.quit()
+    return pd.concat(tmp)
+    
+
+# Start WebScraping
+stack = []
+with ThreadPoolExecutor(max_workers=5) as executor:
+    stack = list(tqdm(executor.map(loop_url, urls), total=len(urls)))
 
 # Save DataFrame
-pd.concat(dfs).to_csv("ywg_targets.csv", index=False)
+pd.concat(stack).to_csv("ywg_targets.csv", index=False)
 
 # Get Stored Data
 df = pd.read_csv("ywg_targets.csv")
 urls = df["href"].values.tolist()
-
+stack = []
 
 # Get URL Info
 def get_url(target_url):
+    co = ChromiumOptions().auto_port()
+    co.set_user_agent(user_agent=user_agent_rotator.get_random_user_agent())
+    co.headless()
+    driver = ChromiumPage(co)
     driver.get(target_url)
-    driver.wait(4)
     dictionary = {
         "company": None, "phone": None, "telephone": None, "wechat": None, "email": None, "location": None
     }
@@ -95,6 +119,10 @@ def get_url(target_url):
     return dictionary
 
 
+# Process
+with ThreadPoolExecutor(max_workers=5) as executor:
+    stack = list(tqdm(executor.map(get_url, urls), total=len(urls)))
+
 # Save DataFrame
-pd.DataFrame([get_url(url) for url in tqdm(urls)]).to_csv("ywg_data.csv", index=False)
+pd.DataFrame(stack).to_csv("ywg_data.csv", index=False)
 driver.quit()
