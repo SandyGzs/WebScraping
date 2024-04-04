@@ -75,7 +75,8 @@ os.makedirs(directory, exist_ok=True)
 def func(link, ID):
     co = ChromiumOptions().auto_port()
     co.set_user_agent(user_agent=user_agent_rotator.get_random_user_agent())
-    # co.headless()
+    co.headless()
+    co.incognito()
     driver = ChromiumPage(co)
     driver.get(url=f"{link}?lang=cn")
 
@@ -115,7 +116,7 @@ def func(link, ID):
             l.append(p)
 
     # Create Article Document
-    with open(f'{filepath}/article.txt', 'w') as f:
+    with open(f'{filepath}/article.txt', 'w', encoding="utf-8") as f:
         stop_words = ["，", ",", "；"]
         f.write(f"文章标题: {article_title}\n")
         f.write(f"文章链接: {link}\n")
@@ -132,7 +133,7 @@ def func(link, ID):
             if l[j].s_ele(".colorbox_gallery"):
                 img_url1 = l[j].s_ele(".colorbox_gallery").child().attr("src")
                 file_format = img_url1.split(".")[-1]
-                img_url2 = f"{"-".join(img_url1.split("-")[:-1])}.{file_format}" if "-" in img_url1 and "x" in img_url1 else img_url1
+                img_url2 = f"""{"-".join(img_url1.split("-")[:-1])}.{file_format}""" if "-" in img_url1 and "x" in img_url1 else img_url1
                 filename = f"{filepath}/{img_number}.{file_format}"
                 tab = driver.new_tab(url=img_url2)
                 header = tab.s_ele(".header")
@@ -169,7 +170,7 @@ def func(link, ID):
                 handler.write(img_data)
 
         # Create Author Document
-        with open(f'{filepath}/author.txt', 'w') as f:
+        with open(f'{filepath}/author.txt', 'w', encoding="utf-8") as f:
             f.write(f"作者: {author_name}\n")
             location = driver.s_ele(".user-location").text if driver.s_ele(".user-location") else "not found"
             f.write(f"作者地址: {location}\n")
