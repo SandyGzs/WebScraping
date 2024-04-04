@@ -51,16 +51,20 @@ import pandas as pd
 import requests
 from DrissionPage import ChromiumPage, ChromiumOptions
 from tqdm import tqdm
+from random_user_agent.user_agent import UserAgent
+from random_user_agent.params import SoftwareName, OperatingSystem
+from concurrent.futures import ThreadPoolExecutor
+
 
 # Open Info
 df = pd.read_csv("info.csv").sort_values(by="post_date_formatted", ascending=False)[:10000]  # 10k are chosen
 permalink = df["permalink"].values.tolist()
 post_id = df["post_id"].values.tolist()
 
-# Open URL
-co = ChromiumOptions().auto_port()
-co.headless(on_off=True)
-co = ChromiumPage(co)
+# Prepare User Agents
+software_names = [SoftwareName.CHROME.value]
+operating_systems = [OperatingSystem.MAC.value]
+user_agent_rotator = UserAgent(software_names=software_names, operating_systems=operating_systems, limit=100)
 
 # Create Main Folder
 directory = f"{os.getcwd()}/main"
@@ -69,14 +73,18 @@ os.makedirs(directory, exist_ok=True)
 
 # Main Function
 def func(link, ID):
-    driver = co.new_tab(url=f"{link}?lang=cn")
-    driver.wait.ele_loaded(".single-content")
+    co = ChromiumOptions().auto_port()
+    co.set_user_agent(user_agent=user_agent_rotator.get_random_user_agent())
+    # co.headless()
+    driver = ChromiumPage(co)
+    driver.get(url=f"{link}?lang=cn")
 
     # Create Folder
     filepath = f"{os.getcwd()}/main/{ID}"
     os.makedirs(filepath, exist_ok=True)
 
     # Article Title
+    driver.wait.ele_loaded(".single-content")
     article_title = driver.s_ele(".single-content").text
 
     # Author Info
@@ -97,14 +105,14 @@ def func(link, ID):
     driver.wait.ele_loaded(".client-render")
 
     # Pictures + Titles
-    stack = []
+    l = []
     paragraphs = driver.s_ele(".client-render").child().children()
     for p in paragraphs:
         if p.attr("class") == "ss-twelvecol shortcolumn":
             for x in p.children():
-                stack.append(x)
+                l.append(x)
         else:
-            stack.append(p)
+            l.append(p)
 
     # Create Article Document
     with open(f'{filepath}/article.txt', 'w') as f:
@@ -116,17 +124,17 @@ def func(link, ID):
                 f.write(f"{key} {value[1]}\n")
         img_number = 0
         last_picture_index = 0
-        for j in range(len(stack)):
-            if stack[j].s_ele(".colorbox_gallery"):
+        for j in range(len(l)):
+            if l[j].s_ele(".colorbox_gallery"):
                 last_picture_index = j
 
-        for j in range(len(stack)):
-            if stack[j].s_ele(".colorbox_gallery"):
-                img_url1 = stack[j].s_ele(".colorbox_gallery").child().attr("src")
+        for j in range(len(l)):
+            if l[j].s_ele(".colorbox_gallery"):
+                img_url1 = l[j].s_ele(".colorbox_gallery").child().attr("src")
                 file_format = img_url1.split(".")[-1]
                 img_url2 = f"{"-".join(img_url1.split("-")[:-1])}.{file_format}" if "-" in img_url1 and "x" in img_url1 else img_url1
                 filename = f"{filepath}/{img_number}.{file_format}"
-                tab = co.new_tab(url=img_url2)
+                tab = driver.new_tab(url=img_url2)
                 header = tab.s_ele(".header")
                 img_data = requests.get(img_url1).content if header else requests.get(img_url2).content
                 with open(filename, 'wb') as handler:
@@ -136,8 +144,8 @@ def func(link, ID):
             else:
                 if j < last_picture_index:
                     pattern = re.compile(r'[\u4e00-\u9fa5]')
-                    sentences = stack[j].text.split("©")[0]
-                    photographer = "©" + stack[j].text.split("©")[1] if "©" in stack[j].text else ""
+                    sentences = l[j].text.split("©")[0]
+                    photographer = "©" + l[j].text.split("©")[1] if "©" in l[j].text else ""
                     if pattern.search(sentences):
                         sentences = "\n".join([item for item in sentences.split("\n") if pattern.search(item)])
                         if "▼" in sentences or "▲" in sentences:
@@ -145,7 +153,7 @@ def func(link, ID):
                                 sentences = stop_word.join([item for item in sentences.split(stop_word) if pattern.search(item)])
                         f.write(f"{sentences}{photographer}\n")
                 else:
-                    f.write(f"{stack[j].text}\n")
+                    f.write(f"{l[j].text}\n")
     # Author HomePage
     if author_url != "not found":
         driver.get(author_url)
@@ -185,9 +193,9 @@ def func(link, ID):
                             contact_type = chn_map.get(contact_type) if contact_type in chn_map else contact_type
                             f.write(f"{contact_type}: {p.text}\n")
 
+        driver.quit()
 
-# Loop
-for i in tqdm(range(10)):
-    func(permalink[i], post_id[i])
 
-co.quit()
+# Process
+with ThreadPoolExecutor(max_workers=3) as executor:
+    stack = list(tqdm(executor.map(func, permalink, post_id), total=len(permalink)))
