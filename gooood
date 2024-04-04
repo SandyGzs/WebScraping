@@ -1,0 +1,193 @@
+"""
+The purpose is to get rid of all repeated english content and download the high resolution pics of the posts with a specific query.
+"""
+
+from algoliasearch.search_client import SearchClient
+import time
+import pandas as pd
+from tqdm import tqdm
+
+# Initialize
+client = SearchClient.create('P2DFUDCD21', '94dece75845ae66b39d67e442486da66')
+index = client.init_index('wp_posts_post')
+dfs = []
+
+# 2011-01-01 TO 2024-04-01 (I am too lazy to use "now")
+for d in tqdm(pd.date_range(start=pd.to_datetime("2011-01-01"), end=pd.to_datetime("2024-04-01"), freq="ME")):
+    st, ed = pd.to_datetime(f"{d.year}-{d.month}-01"), d
+    st, ed = int(time.mktime(st.timetuple())), int(time.mktime(ed.timetuple()))
+    page = 0
+    result = index.search("展",
+                          {
+                              "page": page,
+                              "hitsPerPage": 1000,
+                              "filters": f"post_date:{st} TO {ed}"
+                          }
+                          )
+    data = pd.DataFrame(result.get("hits"))
+    dfs.append(data)
+    while True:
+        page += 1
+        result = index.search("展",
+                          {
+                              "page": page,
+                              "hitsPerPage": 1000,
+                              "filters": f"post_date:{st} TO {ed}"
+                          }
+                          )
+        data = pd.DataFrame(result.get("hits"))
+        if data.empty:
+            break
+        else:
+            dfs.append(data)
+df = pd.concat(dfs).drop_duplicates("post_id").reset_index()
+df.to_csv("info.csv")
+
+##############################################################################################################################################################################
+
+import os
+import re
+import pandas as pd
+import requests
+from DrissionPage import ChromiumPage, ChromiumOptions
+from tqdm import tqdm
+
+# Open Info
+df = pd.read_csv("info.csv").sort_values(by="post_date_formatted", ascending=False)[:10000]  # 10k are chosen
+permalink = df["permalink"].values.tolist()
+post_id = df["post_id"].values.tolist()
+
+# Open URL
+co = ChromiumOptions().auto_port()
+co.headless(on_off=True)
+co = ChromiumPage(co)
+
+# Create Main Folder
+directory = f"{os.getcwd()}/main"
+os.makedirs(directory, exist_ok=True)
+
+
+# Main Function
+def func(link, ID):
+    driver = co.new_tab(url=f"{link}?lang=cn")
+    driver.wait.ele_loaded(".single-content")
+
+    # Create Folder
+    filepath = f"{os.getcwd()}/main/{ID}"
+    os.makedirs(filepath, exist_ok=True)
+
+    # Article Title
+    article_title = driver.s_ele(".single-content").text
+
+    # Author Info
+    driver.wait.ele_loaded(".spec")
+    summary = {}
+    author_url, author_name = ["not found"] * 2
+    if driver.s_eles(".spec"):
+        summary = {
+            child.s_ele(".spec-label").text: [
+                child.s_ele(".spec-data").child().attr("href"),
+                " ".join([ele.text for ele in child.s_ele(".spec-data").children()])
+            ] for child in driver.s_eles(".spec")
+        }
+        if "设计公司:" in summary:
+            author_url, author_name = summary.get("设计公司:")
+
+    # Article Content Text
+    driver.wait.ele_loaded(".client-render")
+
+    # Pictures + Titles
+    stack = []
+    paragraphs = driver.s_ele(".client-render").child().children()
+    for p in paragraphs:
+        if p.attr("class") == "ss-twelvecol shortcolumn":
+            for x in p.children():
+                stack.append(x)
+        else:
+            stack.append(p)
+
+    # Create Article Document
+    with open(f'{filepath}/article.txt', 'w') as f:
+        stop_words = ["，", ",", "；"]
+        f.write(f"文章标题: {article_title}\n")
+        f.write(f"文章链接: {link}\n")
+        if summary != {}:
+            for key, value in summary.items():
+                f.write(f"{key} {value[1]}\n")
+        img_number = 0
+        last_picture_index = 0
+        for j in range(len(stack)):
+            if stack[j].s_ele(".colorbox_gallery"):
+                last_picture_index = j
+
+        for j in range(len(stack)):
+            if stack[j].s_ele(".colorbox_gallery"):
+                img_url1 = stack[j].s_ele(".colorbox_gallery").child().attr("src")
+                file_format = img_url1.split(".")[-1]
+                img_url2 = f"{"-".join(img_url1.split("-")[:-1])}.{file_format}" if "-" in img_url1 and "x" in img_url1 else img_url1
+                filename = f"{filepath}/{img_number}.{file_format}"
+                tab = co.new_tab(url=img_url2)
+                header = tab.s_ele(".header")
+                img_data = requests.get(img_url1).content if header else requests.get(img_url2).content
+                with open(filename, 'wb') as handler:
+                    handler.write(img_data)
+                f.write(f"图片插入: {img_number}.{file_format}\n")
+                img_number += 1
+            else:
+                if j < last_picture_index:
+                    pattern = re.compile(r'[\u4e00-\u9fa5]')
+                    sentences = stack[j].text.split("©")[0]
+                    photographer = "©" + stack[j].text.split("©")[1] if "©" in stack[j].text else ""
+                    if pattern.search(sentences):
+                        sentences = "\n".join([item for item in sentences.split("\n") if pattern.search(item)])
+                        if "▼" in sentences or "▲" in sentences:
+                            for stop_word in stop_words:
+                                sentences = stop_word.join([item for item in sentences.split(stop_word) if pattern.search(item)])
+                        f.write(f"{sentences}{photographer}\n")
+                else:
+                    f.write(f"{stack[j].text}\n")
+    # Author HomePage
+    if author_url != "not found":
+        driver.get(author_url)
+        driver.wait.ele_loaded(".user-avatar")
+        logo_url = driver.s_ele(".user-avatar").child().attr("src") if driver.s_ele(".user-avatar") else "not found"
+
+        # Save Logo
+        if logo_url != "not found":
+            file_format = logo_url.split(".")[-1]
+            img_data = requests.get(logo_url).content
+            filename = f"{filepath}/logo.{file_format}"
+            with open(filename, 'wb') as handler:
+                handler.write(img_data)
+
+        # Create Author Document
+        with open(f'{filepath}/author.txt', 'w') as f:
+            f.write(f"作者: {author_name}\n")
+            location = driver.s_ele(".user-location").text if driver.s_ele(".user-location") else "not found"
+            f.write(f"作者地址: {location}\n")
+            summary = driver.s_ele(".user-about").text if driver.s_ele(".user-about") else "not found"
+            f.write(f"作者简介: {summary}\n")
+            if driver.s_ele(".user-sns"):
+                for p in driver.s_ele(".user-sns").children():
+                    if p.children():
+                        if p.child(1).attr("class"):
+                            contact_type = p.child(1).attr("class").lstrip("fa fa").lstrip("-")
+                            chn_map = {
+                                "link": "链接",
+                                "phone": "手机",
+                                "envelope": "信箱",
+                                "facebook": "脸书",
+                                "wechat": "微信",
+                                "weibo": "微博",
+                                "douban": "豆瓣",
+                                "map-maker": "地址"
+                            }
+                            contact_type = chn_map.get(contact_type) if contact_type in chn_map else contact_type
+                            f.write(f"{contact_type}: {p.text}\n")
+
+
+# Loop
+for i in tqdm(range(10)):
+    func(permalink[i], post_id[i])
+
+co.quit()
