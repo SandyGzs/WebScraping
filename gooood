@@ -1,7 +1,3 @@
-"""
-The purpose is to get rid of all repeated english content and download the high resolution pics of the posts with a specific query.
-"""
-
 from algoliasearch.search_client import SearchClient
 import time
 import pandas as pd
@@ -12,7 +8,7 @@ client = SearchClient.create('P2DFUDCD21', '94dece75845ae66b39d67e442486da66')
 index = client.init_index('wp_posts_post')
 dfs = []
 
-# 2011-01-01 TO 2024-04-01 (I am too lazy to use "now")
+# 2011-01-01 TO 2024-04-01
 for d in tqdm(pd.date_range(start=pd.to_datetime("2011-01-01"), end=pd.to_datetime("2024-04-01"), freq="ME")):
     st, ed = pd.to_datetime(f"{d.year}-{d.month}-01"), d
     st, ed = int(time.mktime(st.timetuple())), int(time.mktime(ed.timetuple()))
@@ -41,9 +37,8 @@ for d in tqdm(pd.date_range(start=pd.to_datetime("2011-01-01"), end=pd.to_dateti
         else:
             dfs.append(data)
 df = pd.concat(dfs).drop_duplicates("post_id").reset_index()
-df.to_csv("info.csv")
 
-##############################################################################################################################################################################
+#############################################################################################################################################################################
 
 import os
 import re
@@ -51,20 +46,19 @@ import pandas as pd
 import requests
 from DrissionPage import ChromiumPage, ChromiumOptions
 from tqdm import tqdm
-from random_user_agent.user_agent import UserAgent
-from random_user_agent.params import SoftwareName, OperatingSystem
+from fake_useragent import UserAgent
 from concurrent.futures import ThreadPoolExecutor
 
 
 # Open Info
-df = pd.read_csv("info.csv").sort_values(by="post_date_formatted", ascending=False)[:10000]  # 10k are chosen
+chunk = 2
+df = df.sort_values(by="post_date_formatted", ascending=False)[1000*(chunk-1):1000*(chunk-0)]  # 10k are chosen but load by each 1k chunk
 permalink = df["permalink"].values.tolist()
 post_id = df["post_id"].values.tolist()
 
 # Prepare User Agents
-software_names = [SoftwareName.CHROME.value]
-operating_systems = [OperatingSystem.MAC.value]
-user_agent_rotator = UserAgent(software_names=software_names, operating_systems=operating_systems, limit=100)
+ua = UserAgent(os="macos", min_version=120.0, browsers="chrome", platforms="pc")
+
 
 # Create Main Folder
 directory = f"{os.getcwd()}/main"
@@ -74,7 +68,7 @@ os.makedirs(directory, exist_ok=True)
 # Main Function
 def func(link, ID):
     co = ChromiumOptions().auto_port()
-    co.set_user_agent(user_agent=user_agent_rotator.get_random_user_agent())
+    co.set_user_agent(user_agent=ua.random)
     co.headless()
     co.incognito()
     driver = ChromiumPage(co)
@@ -86,7 +80,7 @@ def func(link, ID):
 
     # Article Title
     driver.wait.ele_loaded(".single-content")
-    article_title = driver.s_ele(".single-content").text
+    article_title = driver.s_ele(".single-content").text if driver.s_ele(".single-content") else "not found"
 
     # Author Info
     driver.wait.ele_loaded(".spec")
@@ -106,14 +100,17 @@ def func(link, ID):
     driver.wait.ele_loaded(".client-render")
 
     # Pictures + Titles
-    l = []
-    paragraphs = driver.s_ele(".client-render").child().children()
-    for p in paragraphs:
-        if p.attr("class") == "ss-twelvecol shortcolumn":
-            for x in p.children():
-                l.append(x)
-        else:
-            l.append(p)
+    if driver.s_ele(".client-render"):
+        l = []
+        paragraphs = driver.s_ele(".client-render").child().children()
+        for p in paragraphs:
+            if p.attr("class") == "ss-twelvecol shortcolumn":
+                for x in p.children():
+                    l.append(x)
+            else:
+                l.append(p)
+    else: 
+        l = []
 
     # Create Article Document
     with open(f'{filepath}/article.txt', 'w', encoding="utf-8") as f:
@@ -125,36 +122,39 @@ def func(link, ID):
                 f.write(f"{key} {value[1]}\n")
         img_number = 0
         last_picture_index = 0
-        for j in range(len(l)):
-            if l[j].s_ele(".colorbox_gallery"):
-                last_picture_index = j
+        
+        if l:
+            for j in range(len(l)):
+                if l[j].s_ele(".colorbox_gallery"):
+                    last_picture_index = j
 
-        for j in range(len(l)):
-            if l[j].s_ele(".colorbox_gallery"):
-                img_url1 = l[j].s_ele(".colorbox_gallery").child().attr("src")
-                file_format = img_url1.split(".")[-1]
-                img_url2 = f"""{"-".join(img_url1.split("-")[:-1])}.{file_format}""" if "-" in img_url1 and "x" in img_url1 else img_url1
-                filename = f"{filepath}/{img_number}.{file_format}"
-                tab = driver.new_tab(url=img_url2)
-                header = tab.s_ele(".header")
-                img_data = requests.get(img_url1).content if header else requests.get(img_url2).content
-                with open(filename, 'wb') as handler:
-                    handler.write(img_data)
-                f.write(f"图片插入: {img_number}.{file_format}\n")
-                img_number += 1
-            else:
-                if j < last_picture_index:
-                    pattern = re.compile(r'[\u4e00-\u9fa5]')
-                    sentences = l[j].text.split("©")[0]
-                    photographer = "©" + l[j].text.split("©")[1] if "©" in l[j].text else ""
-                    if pattern.search(sentences):
-                        sentences = "\n".join([item for item in sentences.split("\n") if pattern.search(item)])
-                        if "▼" in sentences or "▲" in sentences:
-                            for stop_word in stop_words:
-                                sentences = stop_word.join([item for item in sentences.split(stop_word) if pattern.search(item)])
-                        f.write(f"{sentences}{photographer}\n")
+            for j in range(len(l)):
+                if l[j].s_ele(".colorbox_gallery"):
+                    img_url1 = l[j].s_ele(".colorbox_gallery").child().attr("src")
+                    file_format = img_url1.split(".")[-1]
+                    img_url2 = f"""{"-".join(img_url1.split("-")[:-1])}.{file_format}""" if "-" in img_url1 and "x" in img_url1 else img_url1
+                    filename = f"{filepath}/{img_number}.{file_format}"
+                    tab = driver.new_tab(url=img_url2)
+                    header = tab.s_ele(".header")
+                    img_data = requests.get(img_url1).content if header else requests.get(img_url2).content
+                    with open(filename, 'wb') as handler:
+                        handler.write(img_data)
+                    f.write(f"图片插入: {img_number}.{file_format}\n")
+                    img_number += 1
+                    tab.close()
                 else:
-                    f.write(f"{l[j].text}\n")
+                    if j < last_picture_index:
+                        pattern = re.compile(r'[\u4e00-\u9fa5]')
+                        sentences = l[j].text.split("©")[0]
+                        photographer = "©" + l[j].text.split("©")[1] if "©" in l[j].text else ""
+                        if pattern.search(sentences):
+                            sentences = "\n".join([item for item in sentences.split("\n") if pattern.search(item)])
+                            if "▼" in sentences or "▲" in sentences:
+                                for stop_word in stop_words:
+                                    sentences = stop_word.join([item for item in sentences.split(stop_word) if pattern.search(item)])
+                            f.write(f"{sentences}{photographer}\n")
+                    else:
+                        f.write(f"{l[j].text}\n")
     # Author HomePage
     if author_url != "not found":
         driver.get(author_url)
@@ -198,5 +198,5 @@ def func(link, ID):
 
 
 # Process
-with ThreadPoolExecutor(max_workers=3) as executor:
+with ThreadPoolExecutor(max_workers=8) as executor:
     stack = list(tqdm(executor.map(func, permalink, post_id), total=len(permalink)))
