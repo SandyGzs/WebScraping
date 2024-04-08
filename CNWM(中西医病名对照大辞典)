@@ -1,0 +1,83 @@
+"""
+It is a very interesting string manipulation + slow webscraping process given that the website is very weak.
+source url: http://cnwm.nricm.edu.tw/cgi-bin/cnwm/gsweb.cgi?o=dcnwm
+"""
+
+import re
+import pandas as pd
+from DrissionPage import ChromiumPage, ChromiumOptions
+from bs4 import BeautifulSoup
+from fake_useragent import UserAgent
+from tqdm import tqdm
+from zhconv import convert
+
+# Prepare SID
+sid_list = ["O00000001"[:-len(str(i+1))] + str(i+1) for i in range(997)]
+
+# Prepare User Agents
+ua = UserAgent(os="macos", min_version=120.0, browsers="chrome", platforms="pc")
+
+# Chrome
+co = ChromiumOptions().auto_port()
+co.set_user_agent(user_agent=ua.random)
+co.incognito()
+driver = ChromiumPage(co)
+
+# Get Token
+while True:
+    driver.listen.start("http://cnwm.nricm.edu.tw/cgi-bin/cnwm/gsweb.cgi?ccd=")
+    driver.get("http://cnwm.nricm.edu.tw/cgi-bin/cnwm/gsweb.cgi?o=dcnwm")
+    res = driver.listen.wait(1, timeout=5)
+    if res:
+        token = res.url.split("ccd=")[1].split("&")[0]
+        break
+    else:
+        driver.refresh()
+
+stack = []
+# Get Data
+for sid in tqdm(sid_list):
+    while True:
+        loaded = driver.get(f"http://cnwm.nricm.edu.tw/cgi-bin/cnwm/gsweb.cgi?ccd={token}&o=sid=%22{sid}%22.")
+        driver.wait(1)
+        if loaded:
+            break
+        else:
+            driver.refresh()
+
+    dictionary = dict()
+    soup = BeautifulSoup(driver.html, "lxml")
+    t = soup.get_text().replace("\n", "").replace("\t", "").replace(" ", "")
+    while re.compile(r"[\ue000-\uf8ff]").search(t):
+        t = t.replace(t[re.compile(r"[\ue000-\uf8ff]").search(t).start()], "")
+
+    dictionary["病名"] = t.split("病名:")[1].split("DISEASE:")[0] if "病名:" in t and "DISEASE:" in t else ""
+    dictionary["現代醫學病名及定義"] = t.split("現代醫學病名及定義:")[1].split("中醫相關病名及文獻出處:")[0] if "現代醫學病名及定義:" in t and "中醫相關病名及文獻出處:" in t else ""
+    part4 = t.split("中醫相關病名及文獻出處:")[1].split("診斷要點:")[0] if "中醫相關病名及文獻出處:" in t and "診斷要點:" in t else ""
+    cn_words = []
+    cn_word = ""
+    open_signs = 0
+    if part4 != "":
+        for i in range(len(part4)):
+            if part4[i] in "《「(":
+                open_signs += 1
+
+            if part4[i] in "》」)":
+                open_signs -= 1
+
+            if open_signs == 0 and part4[i].isalpha() and part4[i] not in "《「(》」)":
+                cn_word += part4[i]
+            else:
+                if cn_word != "":
+                    cn_words.append(cn_word)
+                    cn_word = ""
+    dictionary["中醫相關病名"] = "、".join(cn_words)
+    dictionary["診斷要點"] = t.split("診斷要點:")[1].split("綜論:")[0] if "診斷要點:" in t and "綜論:" in t else ""
+    dictionary["綜論"] = t.split("綜論:")[1].split("預覽及輸出檢索結果")[0] if "綜論:" in t and "預覽及輸出檢索結果" in t else ""
+
+    for key, value in dictionary.items():
+        dictionary[key] = convert(value, "zh-hans")
+
+    stack.append(dictionary)
+
+pd.DataFrame(stack).to_csv("final.csv", index=False)
