@@ -1,0 +1,249 @@
+"""
+Sometimes we wonder as a supplier of a company, 
+we want to know how much items that the company needs as they are selling our items or how popular are our products on their websites.
+
+KegKing is an example, they use CloudFlare to prevent deep infiltration into their exposed API endpoints with timestamps encoding methods. 
+Thus, from our ends, we can only access the website via WebEnd user activities via Javascripts and they increase the refreshing speed and reducing button loading speed.
+In this case, we need to reach a balance between "fast" and "steady".
+"""
+
+from algoliasearch.search_client import SearchClient
+from concurrent.futures import ThreadPoolExecutor
+from difflib import SequenceMatcher
+from tqdm import tqdm
+import pandas as pd
+import validators
+from DrissionPage import ChromiumPage, ChromiumOptions
+from fake_useragent import UserAgent
+
+# Prepare User Agents
+ua = UserAgent(os="windows", min_version=120.0, browsers="chrome", platforms="pc")
+
+
+# Search Bar
+with open("use.txt") as f:  # Here, user provides a list of SKU wanted separated by lines.
+    query = f.readline()
+    while True:
+        # Open
+        co = ChromiumOptions().auto_port()
+        co.headless()
+        co.incognito()
+        co.set_user_agent(user_agent=ua.random)
+        co.set_argument('--start-maximized')
+        driver = ChromiumPage(co)
+        driver.get("https://www.kegking.com.au/")
+        driver.wait(1)
+        if driver.wait.eles_loaded(".input-text algolia-search-input aa-input"):
+            driver.listen.start(targets="https://kw15jqvooq-dsn.algolia.net/1/indexes/*/queries?")
+            search_bar = driver.ele(".input-text algolia-search-input aa-input")
+            if search_bar:
+                search_bar.input(query)
+                res = driver.listen.wait(1, timeout=10)  # 等待并获取一个数据包
+                driver.clear_cache()
+                driver.quit()
+                # Get API Key
+                if res:
+                    apiKey = res.request.postData.get("apiKey")
+                    break
+
+
+# Initialize
+client = SearchClient.create('KW15JQVOOQ', apiKey)
+index = client.init_index('kegdefault_products')
+
+
+# Search
+def search(query_string):
+    result = index.search(query_string)
+    targets = ["name", "sku", "url"]
+    if result.get("hits"):
+        record = result.get("hits")[0]
+        df = pd.DataFrame([{target: record.get(target) for target in targets}])
+    else:
+        df = pd.DataFrame([{target: "Not Found" for target in targets}])
+    df["query_string"] = query_string
+    return df
+
+
+# Find Targets
+dfs = []
+with open("use.txt") as f:
+    for line in tqdm(f.readlines()):
+        dfs.append(search(line.strip()))
+df0 = pd.concat(dfs)
+
+# Targets
+names = df0["name"].values.tolist()
+urls = df0["url"].values.tolist()
+
+# Prepare Error Logs
+with open("logs.txt", "w", encoding="utf-8") as rewrite:
+    rewrite.write("Welcome to Sandy's logging records: \n")
+
+
+def add_cart(web_driver, name_input):
+    failures = 0
+    while True:
+        if web_driver.wait.eles_loaded(".swatch-attribute-options clearfix", timeout=1):
+            dropdowns = web_driver.eles(".swatch-attribute-options clearfix")
+            web_driver.stop_loading()
+            for dropdown in dropdowns:
+                if (dropdown.child()
+                        and not dropdown.child().attr("style")
+                        and dropdown.child().child()
+                        and dropdown.child().child().attr("class")
+                        and "selected" not in dropdown.child().child().attr("class")):
+                    dropdown.child().child().click(by_js=True)
+        action = web_driver.ele(".action primary tocart").click(by_js=True) \
+            if web_driver.wait.eles_loaded(".action primary tocart", timeout=1) else False
+
+        if action:
+            return web_driver, 0
+        elif failures >= 3:
+            with open("logs.txt", "a", encoding="utf-8") as f:
+                f.write(f"add cart process for {name_input} has failed \n")
+            return web_driver, -1
+        else:
+            failures += 1
+
+        web_driver.refresh()
+
+
+def update_cart(web_driver, iteration, name_input):
+    qty_curr, qty_next, action, failures = 0, 0, False, 0
+    while True:
+        web_driver.refresh()
+        if web_driver.wait.eles_loaded("My Cart", timeout=1):
+            try:
+                web_driver.ele("My Cart").parent().click()
+            except Exception as _:
+                pass
+
+        if web_driver.wait.eles_loaded(".product-item-details", timeout=1):
+            web_driver.stop_loading()
+            items = web_driver.eles(".product-item-details")
+            for item in items:
+                similarity_score = SequenceMatcher(a=name_input, b=item.text[:len(name_input)]).ratio()
+                if similarity_score > 0.5:
+                    if web_driver.wait.eles_loaded(".item-qty cart-item-qty", timeout=1):
+                        cart_input = item.ele(".item-qty cart-item-qty")
+                        qty_curr = float(cart_input.attr("data-item-qty"))
+                        qty_next = 2 ** iteration + qty_curr
+                        cart_input.input(qty_next, clear=True, by_js=True)
+                        action = item.ele(".update-cart-item").click(by_js=True) \
+                            if web_driver.wait.eles_loaded(".update-cart-item") else False
+                        driver.wait(1)
+                        if web_driver.wait.eles_loaded("Attention", timeout=1):
+                            break
+
+        if action:
+            return web_driver, iteration - 1, qty_curr
+        elif failures >= 3:
+            with open("logs.txt", "a", encoding="utf-8") as f:
+                f.write(f"update cart process for {name_input} has failed \n")
+            return web_driver, iteration, -1
+        else:
+            failures += 1
+
+
+def check_cart(web_driver, name_input):
+    failures = 0
+    while True:
+        web_driver.refresh()
+        if web_driver.wait.eles_loaded("My Cart", timeout=1):
+            try:
+                web_driver.ele("My Cart").parent().click()
+            except Exception as _:
+                pass
+
+        if web_driver.wait.eles_loaded(".product-item-details", timeout=1):
+            items = web_driver.eles(".product-item-details")
+            web_driver.stop_loading()
+            for item in items:
+                similarity_score = SequenceMatcher(a=name_input, b=item.text[:len(name_input)]).ratio()
+                if similarity_score > 0.5 and web_driver.wait.eles_loaded(".item-qty cart-item-qty", timeout=1):
+                    return web_driver, float(item.ele(".item-qty cart-item-qty").attr("data-item-qty"))
+
+        if failures >= 3:
+            with open("logs.txt", "a", encoding="utf-8") as f:
+                f.write(f"check cart process for {name_input} has failed \n")
+            return web_driver, -1
+        else:
+            failures += 1
+
+
+def do_the_work(link, name_input):
+    # Prerequisite
+    in_process, qty, loops = validators.url(link), 0, 0
+    while in_process:
+        # Chrome
+        co = ChromiumOptions().auto_port()
+        co.headless()
+        co.incognito()
+        co.set_user_agent(user_agent=ua.random)
+        co.set_argument('--start-maximized')
+        driver = ChromiumPage(co)
+
+        # URL
+        if not driver.get(link):
+            # Clear
+            driver.clear_cache()
+            driver.quit()
+            return qty
+        driver.wait(1)
+
+        # BackOrder
+        if driver.wait.eles_loaded(".stock unavailable", timeout=1):
+            # Clear
+            driver.clear_cache()
+            driver.quit()
+            return qty
+
+        # Add To Cart
+        driver, qty = add_cart(driver, name_input)
+        driver.wait(1)
+
+        # In Cart by Confirming 3 times
+        check = driver.wait.eles_loaded(".item product product-item")
+        check = driver.wait.eles_loaded(".item product product-item") if not check else check
+        check = driver.wait.eles_loaded(".item product product-item") if not check else check
+        if not check:
+            # Clear
+            driver.clear_cache()
+            driver.quit()
+            return qty
+
+        number = 13
+        while number >= 0:
+            driver, number, qty = update_cart(driver, number, name_input)
+            if qty == -1:
+                break
+
+        driver, qty = check_cart(driver, name_input)
+        driver.wait(1)
+
+        driver.clear_cache()
+        driver.quit()
+
+        if qty >= 0:
+            return qty
+        elif loops <= 3:
+            loops += 1
+        else:
+            print("Some errors have issued - please contact me via zg53@cornell.edu or our support team")
+            return -1
+
+        with open("logs.txt", "a", encoding="utf-8") as f:
+            f.write(f"{name_input} has looped {loops} times\n")
+
+    return qty
+
+
+# Process
+with ThreadPoolExecutor(max_workers=8) as executor:
+    stack = list(tqdm(executor.map(do_the_work, urls, names), total=len(urls)))
+
+df0["qty"] = stack
+df0.to_csv("target.csv", index=False)
+with open("logs.txt", "a", encoding="utf-8") as f:
+    f.write(f"Success and Hope you have a nice day! \n")
