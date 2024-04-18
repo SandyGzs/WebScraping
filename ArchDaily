@@ -80,6 +80,8 @@ df = pd.concat(dfs)
 df.to_csv("target.csv", index=False)
 print(df.groupby("search_cat").count())
 
+##########################################################################################################################################################################################################################
+
 import os
 import re
 from ast import literal_eval
@@ -93,26 +95,34 @@ from validators import url
 
 
 def get_img(img_url, path, img_number, writer, credit):
+    data_collected = False
     if img_url.startswith("https://"):
         file_format = img_url.split(".")[-1].split("?")[0]
         filename = f"{path}\\{img_number}.{file_format}"
-        img_data = requests.get(img_url).content
-        with open(filename, 'wb') as handler:
-            handler.write(img_data)
-        writer.write(f"图片插入: {img_number}.{file_format} 摄影师: {credit}\n")
-    else:
+        pattern = r"(medium_jpg|small_jpg|thumb_jpg|newsletter|slideshow|small_portrait)"
+        img_url_large = re.sub(pattern, "large_jpg", img_url)
+        if not data_collected:
+            try:
+                response = requests.get(img_url_large)
+                data_collected = True
+            except Exception as e:
+                print(e)
+
+        if not data_collected:
+            try:
+                response = requests.get(img_url)
+                data_collected = True
+            except Exception as e:
+                print(e)
+
+        if data_collected:
+            img_data = requests.get(img_url).content
+            with open(filename, 'wb') as handler:
+                handler.write(img_data)
+            writer.write(f"图片插入: {img_number}.{file_format} 摄影师: {credit}\n")
+
+    if not data_collected:
         writer.write(f"图片插入: {img_url} 摄影师: {credit}\n")
-
-
-def get_logo(img_url, path, img_number, writer):
-    if img_url.startswith("https://"):
-        file_format = img_url.split(".")[-1].split("?")[0]
-        filename = f"{path}\\logo{img_number}.{file_format}"
-        img_data = requests.get(img_url).content
-        with open(filename, 'wb') as handler:
-            handler.write(img_data)
-    else:
-        writer.write(f"图片插入: {img_url}\n")
 
 
 def task(page_url, article_title, featured_image, offices, author_url, search_cat):
@@ -209,15 +219,7 @@ def task(page_url, article_title, featured_image, offices, author_url, search_ca
                             f.write(f"图片名称: {img_title} ")
                             photographer = source.split("©")[1].strip() if "©" in source else ""
                             get_img(
-                                re.sub(
-                                    r"(medium_jpg|small_jpg|thumb_jpg|newsletter|slideshow|small_portrait)",
-                                    "large_jpg",
-                                    children[k].s_ele("tag:img").attr("src")
-                                ),
-                                filepath_cloud,
-                                j,
-                                f,
-                                photographer
+                                children[k].s_ele("tag:img").attr("src"), filepath_cloud, j, f, photographer
                             )
                             j += 1
 
@@ -265,11 +267,7 @@ def task(page_url, article_title, featured_image, offices, author_url, search_ca
                                 f.write(f"图片名称: {img_title} ")
                                 photographer = source.split("©")[1].strip() if "©" in source else ""
                                 get_img(
-                                    re.sub(
-                                        r"(medium_jpg|small_jpg|thumb_jpg|newsletter|slideshow|small_portrait)",
-                                        "large_jpg",
-                                        tab.s_ele(".js-gal-figure afd-gal-figure").s_ele("tag:img").attr("src")
-                                    ),
+                                    tab.s_ele(".js-gal-figure afd-gal-figure").s_ele("tag:img").attr("src"),
                                     f'{filepath_cloud}\\pictures', k, f, photographer
                                 )
 
@@ -339,15 +337,9 @@ def task(page_url, article_title, featured_image, offices, author_url, search_ca
                         if (is_office_img
                                 and driver.s_ele(".office__header-img").s_ele("tag:img")
                                 and driver.s_ele(".office__header-img").s_ele("tag:img").attr("src")):
-                            get_logo(
-                                re.sub(
-                                    r"(medium_jpg|small_jpg|thumb_jpg|newsletter|slideshow|small_portrait)",
-                                    "large_jpg",
-                                    driver.s_ele(".office__header-img").s_ele("tag:img").attr("src")
-                                ),
-                                filepath_cloud,
-                                j,
-                                f
+                            get_img(
+                                driver.s_ele(".office__header-img").s_ele("tag:img").attr("src"),
+                                filepath_cloud, j, f, ""
                             )
 
                         if is_office_info:
@@ -420,11 +412,9 @@ def task(page_url, article_title, featured_image, offices, author_url, search_ca
             if is_author_info:
                 with open(f'{filepath_cloud}\\author0.txt', 'w', encoding="utf-8") as f:
                     if is_author_img:
-                        get_logo(
+                        get_img(
                             driver.s_ele(".avatar").attr("style").split("url('")[1].split("')")[0],
-                            filepath_cloud,
-                            0,
-                            f
+                            filepath_cloud, 0, f, ""
                         )
 
                     if is_author_info:
