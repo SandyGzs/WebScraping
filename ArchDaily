@@ -1,0 +1,490 @@
+"""
+ArchDaily is very sensitive about IP that draws a large dataset (pictures or texts) so a proxy is needed after they banned the abnormal ones.
+You can change your search pool based on the category links.
+"""
+
+import pandas as pd
+import requests
+from DrissionPage import ChromiumPage, ChromiumOptions
+from fake_useragent import UserAgent
+
+# Prepare User Agents
+ua = UserAgent(os="macos", min_version=120.0, browsers="chrome", platforms="pc")
+
+# Search Pool
+search_categories = [
+    "wen-hua-jian-zhu",
+    "mei-zhu-guan",
+    "shi-jue-yi-zhu-zhong-xin",
+    "lin-shi-zhuang-zhi",
+    "bo-wu-guan",
+    "bo-wu-guan-zhan-lan-guan-shi-nei-she-ji",
+    "zhan-chen-zhuang-zhi",
+    "zhan-ting",
+    "zhan-guan"
+]
+
+
+def find_information(search_cat):
+    # Chrome
+    co = ChromiumOptions().auto_port()
+    co.set_user_agent(user_agent=ua.random)
+    co.headless()
+    co.incognito()
+    co.set_argument('--start-maximized')
+    driver = ChromiumPage(co)
+
+    # Target URL
+    target_url = "https://www.archdaily.cn/search/api/v1/cn/projects/categories/"
+    search_url = "https://www.archdaily.cn/search/cn/projects/categories/"
+    search_num = 1
+
+    # Listen + Open Category
+    driver.listen.start(targets=target_url)
+    driver.get(url=search_url+search_cat+f"?page={search_num}")
+    DataPacket = driver.listen.wait(1, timeout=10)  # 等待并获取1个数据包
+
+    # Params
+    cookies = driver.cookies(all_info=True, as_dict=True, all_domains=True)
+    url = DataPacket.url
+    headers = DataPacket.request.headers
+
+    # Get
+    response = requests.get(
+        cookies=cookies, url=url, headers=headers
+    )
+    print("successful!") if response.status_code == 200 else print("retries!")
+
+    # Catch All Pages
+    stack = []
+    while True:
+        dataframe = pd.json_normalize(response.json()["results"])
+        dataframe["search_cat"] = search_cat
+        stack.append(dataframe)
+
+        if dataframe.empty:
+            break
+        else:
+            search_num += 1
+            url = target_url+search_cat+f"?page={search_num}"
+            response = requests.get(
+                cookies=cookies, url=url, headers=headers
+            )
+
+    driver.quit()
+    return pd.concat(stack)
+
+
+dfs = [find_information(cat) for cat in search_categories]
+df = pd.concat(dfs)
+df.to_csv("target.csv", index=False)
+print(df.groupby("search_cat").count())
+
+import os
+import re
+from ast import literal_eval
+from concurrent.futures import ThreadPoolExecutor
+import pandas as pd
+import requests
+from DrissionPage import ChromiumPage, ChromiumOptions
+from fake_useragent import UserAgent
+from tqdm import tqdm
+from validators import url
+
+
+def get_img(img_url, path, img_number, writer, credit):
+    if img_url.startswith("https://"):
+        file_format = img_url.split(".")[-1].split("?")[0]
+        filename = f"{path}\\{img_number}.{file_format}"
+        img_data = requests.get(img_url).content
+        with open(filename, 'wb') as handler:
+            handler.write(img_data)
+        writer.write(f"图片插入: {img_number}.{file_format} 摄影师: {credit}\n")
+    else:
+        writer.write(f"图片插入: {img_url} 摄影师: {credit}\n")
+
+
+def get_logo(img_url, path, img_number, writer):
+    if img_url.startswith("https://"):
+        file_format = img_url.split(".")[-1].split("?")[0]
+        filename = f"{path}\\logo{img_number}.{file_format}"
+        img_data = requests.get(img_url).content
+        with open(filename, 'wb') as handler:
+            handler.write(img_data)
+    else:
+        writer.write(f"图片插入: {img_url}\n")
+
+
+def task(page_url, article_title, featured_image, offices, author_url, search_cat):
+    # Create|Search Folder
+    folder = article_title.split('/')[0].strip()
+    for sign in list('\/:*?"<>|'):
+        folder = folder.replace(sign, "")
+    filepath_cloud = f"D:\\Users\\vadymk\\OneDrive - ODDITY Tech LTD\\ArchDaily\\{search_cat}\\{folder}"
+    filepath_local = f"D:\\Users\\vadymk\\PycharmProjects\pythonProject\\ArchDaily\\{search_cat}\\{folder}"
+    in_process = False if os.path.isdir(filepath_cloud + "finished") or os.path.isdir(
+        filepath_local + "finished") else True
+    if in_process:
+        # Create Folder
+        os.makedirs(filepath_cloud, exist_ok=True)
+        os.makedirs(filepath_local, exist_ok=True)
+
+    # Extra Pictures
+    if in_process:
+        os.makedirs(f"{filepath_cloud}\\pictures", exist_ok=True)
+
+    # Process
+    loop = 0
+    while in_process:
+        # Chrome
+        co = ChromiumOptions().auto_port()
+        co.set_user_agent(user_agent=ua.random)
+        co.headless()
+        co.incognito()
+        co.set_argument('--start-maximized')
+        driver = ChromiumPage(co)
+
+        # Real URL?
+        link = page_url
+        if not url(link):
+            driver.clear_cache()
+            driver.quit()
+            break
+
+        # Skip After Errors
+        if driver.get(link):
+            pass
+        else:
+            driver.clear_cache()
+            driver.quit()
+            break
+
+        # Any Major Pic?
+        is_feature_images = featured_image
+
+        # Any Content?
+        is_content = driver.wait.eles_loaded(".afd-post-content")
+
+        # Any Extra Pic?
+        is_extra_pic = driver.wait.eles_loaded(".gallery-thumbs-link")
+
+        # Terminate
+        driver.stop_loading()
+
+        if is_content and is_extra_pic:
+            j = 0
+            with open(f'{filepath_cloud}\\article.txt', 'w', encoding="utf-8") as f:
+                f.write(f"文章标题: {article_title}\n")
+                f.write(f"文章链接: {link}\n")
+                if is_feature_images:
+                    source = driver.s_ele(
+                        ".featured-image js-image-size media-picture").text if driver.wait.eles_loaded(
+                        ".featured-image js-image-size media-picture") else ""
+                    source = source.replace("\n", "")
+                    source = source.replace("收藏这幅画！", "")
+                    img_title = source.split("©")[0].strip()
+                    f.write(f"图片名称: {img_title} ")
+                    photographer = source.split("©")[1].strip() if "©" in source else ""
+                    get_img(
+                        featured_image,
+                        filepath_cloud, j, f, photographer
+                    )
+
+                if is_content:
+                    children = driver.s_ele(".afd-post-content").children()
+                    st = 0
+                    for k in range(len(children)):
+                        if children[k].attr("class") == "article-meta":
+                            st = k + 1
+                            break
+
+                    for k in range(st, len(children)):
+                        if (children[k].attr("class") == "js-image-size media-picture"
+                                and children[k].s_ele("tag:img")
+                                and children[k].s_ele("tag:img").attr("src")):
+                            source = children[k].text
+                            source = source.replace("\n", "")
+                            source = source.replace("收藏这幅画！", "")
+                            img_title = source.split("©")[0].strip()
+                            f.write(f"图片名称: {img_title} ")
+                            photographer = source.split("©")[1].strip() if "©" in source else ""
+                            get_img(
+                                re.sub(
+                                    r"(medium_jpg|small_jpg|thumb_jpg|newsletter|slideshow|small_portrait)",
+                                    "large_jpg",
+                                    children[k].s_ele("tag:img").attr("src")
+                                ),
+                                filepath_cloud,
+                                j,
+                                f,
+                                photographer
+                            )
+                            j += 1
+
+                        elif children[k].attr("class") in ["afd-specs", "afd-specs__header"]:
+                            for s_ele in children[k].s_eles(".afd-specs__item"):
+                                key, value = s_ele.s_ele(".afd-specs__key"), s_ele.s_ele(".afd-specs__value")
+                                if key:
+                                    f.write(key.text)
+                                if value:
+                                    f.write(value.text)
+                                f.write("\n")
+
+                        elif children[k].attr("class") not in ["thumbs afd-desktop-e clearfix", "afd-specs__btn"]:
+                            content = children[k].text
+                            content = content.replace("收藏这幅画！", "")
+                            if content.replace("\t", "").replace("\n", "").strip() != "":
+                                f.write(f'{content}\n')
+
+            if is_extra_pic:
+                children = driver.s_eles(".gallery-thumbs-link")
+                with open(f'{filepath_cloud}\\pictures\\pictures.txt', 'w', encoding="utf-8") as f:
+                    for k in range(len(children)):
+                        if children[k].attr("href"):
+                            # Open
+                            tab = driver.new_tab(children[k].attr("href"))
+
+                            # Check Picture Title
+                            is_pic_title = tab.wait.eles_loaded(".afd-gal-figcaption js-gal-figcaption")
+
+                            # Check Picture Shown
+                            is_pic_shown = tab.wait.eles_loaded(".js-gal-figure afd-gal-figure")
+
+                            # Terminate
+                            tab.stop_loading()
+
+                            # Process
+                            if (is_pic_shown
+                                    and tab.s_ele(".js-gal-figure afd-gal-figure").s_ele("tag:img")
+                                    and tab.s_ele(".js-gal-figure afd-gal-figure").s_ele("tag:img").attr("src")):
+                                source = tab.s_ele(
+                                    ".afd-gal-figcaption js-gal-figcaption").text if is_pic_title else ""
+                                source = source.replace("\n", "")
+                                source = source.replace("收藏这幅画！", "")
+                                img_title = source.split("©")[0].strip()
+                                f.write(f"图片名称: {img_title} ")
+                                photographer = source.split("©")[1].strip() if "©" in source else ""
+                                get_img(
+                                    re.sub(
+                                        r"(medium_jpg|small_jpg|thumb_jpg|newsletter|slideshow|small_portrait)",
+                                        "large_jpg",
+                                        tab.s_ele(".js-gal-figure afd-gal-figure").s_ele("tag:img").attr("src")
+                                    ),
+                                    f'{filepath_cloud}\\pictures', k, f, photographer
+                                )
+
+                            # Close
+                            tab.close()
+
+            driver.clear_cache()
+            driver.quit()
+            break
+        else:
+            driver.clear_cache()
+            driver.quit()
+            pass
+
+        loop += 1
+        if loop >= 3:
+            print(f"Some errors have occurred: {link}")
+            break
+
+    if offices:
+        for j in range(len(offices)):
+            loop = 0
+            while in_process:
+                # Chrome
+                co = ChromiumOptions().auto_port()
+                co.set_user_agent(user_agent=ua.random)
+                co.headless()
+                co.incognito()
+                co.set_argument('--start-maximized')
+                driver = ChromiumPage(co)
+
+                # Real URL?
+                link = offices[j].get("url")
+                if not url(link):
+                    driver.clear_cache()
+                    driver.quit()
+                    break
+
+                # Skip After Errors
+                if driver.get(link):
+                    pass
+                else:
+                    driver.clear_cache()
+                    driver.quit()
+                    break
+
+                # Check Office Img
+                is_office_img = driver.wait.eles_loaded(".office__header-img")
+
+                # Check Office Name
+                is_office_name = driver.wait.eles_loaded(".afd-title-big")
+
+                # Check Office Location
+                is_office_location = driver.wait.eles_loaded(".office__header-name")
+
+                # Check Office Info
+                is_office_info = driver.wait.eles_loaded(".office__header-info")
+
+                # Check Office Summary
+                is_office_summary = driver.wait.eles_loaded(".office__header-description-container")
+
+                # Terminate
+                driver.stop_loading()
+
+                if is_office_info:
+                    with open(f'{filepath_cloud}\\office{j}.txt', 'w', encoding="utf-8") as f:
+                        if (is_office_img
+                                and driver.s_ele(".office__header-img").s_ele("tag:img")
+                                and driver.s_ele(".office__header-img").s_ele("tag:img").attr("src")):
+                            get_logo(
+                                re.sub(
+                                    r"(medium_jpg|small_jpg|thumb_jpg|newsletter|slideshow|small_portrait)",
+                                    "large_jpg",
+                                    driver.s_ele(".office__header-img").s_ele("tag:img").attr("src")
+                                ),
+                                filepath_cloud,
+                                j,
+                                f
+                            )
+
+                        if is_office_info:
+                            office_name = driver.s_ele(".afd-title-big").text if is_office_name else "not found"
+                            f.write(f"作者: {office_name}\n")
+                            office_location = driver.s_ele(
+                                ".office__header-name").text if is_office_location else "not found"
+                            f.write(f"作者地址: {office_location}\n")
+                            contact = [item for item in driver.s_ele(".office__header-info").text.split("\n") if
+                                       url(item)]
+                            contact = contact[0] if contact else "not found"
+                            f.write(f"作者链接: {contact}\n")
+                            office_summary = driver.s_ele(
+                                ".office__header-description-container").text if is_office_summary else "not found"
+                            f.write(f"作者简介: {office_summary}\n")
+
+                    driver.clear_cache()
+                    driver.quit()
+                    break
+                else:
+                    driver.clear_cache()
+                    driver.quit()
+                    pass
+
+                loop += 1
+                if loop >= 3:
+                    print(f"Some errors have occurred: {link}")
+                    break
+    else:
+        loop = 0
+        while in_process:
+            # Chrome
+            co = ChromiumOptions().auto_port()
+            co.set_user_agent(user_agent=ua.random)
+            co.headless()
+            co.incognito()
+            co.set_argument('--start-maximized')
+            driver = ChromiumPage(co)
+
+            # Real URL?
+            link = author_url
+            if not url(link):
+                driver.clear_cache()
+                driver.quit()
+                break
+
+            # Skip After Errors
+            if driver.get(link):
+                pass
+            else:
+                driver.clear_cache()
+                driver.quit()
+                break
+
+            # Check Author Img
+            is_author_img = driver.wait.eles_loaded(".avatar")
+
+            # Check Author Name
+            is_author_name = driver.wait.eles_loaded(".afd-title-big")
+
+            # Check Author Info
+            is_author_info = driver.wait.eles_loaded(".landing-profile")
+
+            # Check Author Summary
+            is_author_summary = driver.wait.eles_loaded(".hint")
+
+            # Terminate
+            driver.stop_loading()
+
+            if is_author_info:
+                with open(f'{filepath_cloud}\\author0.txt', 'w', encoding="utf-8") as f:
+                    if is_author_img:
+                        get_logo(
+                            driver.s_ele(".avatar").attr("style").split("url('")[1].split("')")[0],
+                            filepath_cloud,
+                            0,
+                            f
+                        )
+
+                    if is_author_info:
+                        author_name = driver.s_ele(".afd-title-big").text if is_author_name else "not found"
+                        f.write(f"作者: {author_name.strip('关注')}\n")
+                        author_summary = driver.s_ele(".hint").text if is_author_summary else "not found"
+                        f.write(f"作者简介: {author_summary}\n")
+
+                driver.clear_cache()
+                driver.quit()
+                break
+            else:
+                driver.clear_cache()
+                driver.quit()
+                pass
+
+            loop += 1
+            if loop >= 3:
+                print(f"Some errors have occurred: {link}")
+                break
+
+    if not os.path.isdir(filepath_cloud + "finished"):
+        os.rename(filepath_cloud, filepath_cloud + "finished")
+
+    if not os.path.isdir(filepath_local + "finished"):
+        os.rename(filepath_local, filepath_local + "finished")
+
+
+# Open CSV
+df = pd.read_csv("D:\\Users\\vadymk\\PycharmProjects\pythonProject\ArchDaily\\target.csv")
+urls = df["url"].values.tolist()
+title = df["title"].values.tolist()
+url_large = df["featured_images.url_large"].values.tolist()
+page_offices = [literal_eval(item) for item in df["offices"].values.tolist()]
+page_author = df["author.url"].values.tolist()
+search_categories = df["search_cat"].values.tolist()
+
+# Prepare User Agents
+ua = UserAgent(os="windows", min_version=120.0, browsers="chrome", platforms="pc")
+
+# Search Categories Dictionary
+search_cat_d = {
+    "wen-hua-jian-zhu": "文化建筑",
+    "mei-zhu-guan": "美术馆",
+    "shi-jue-yi-zhu-zhong-xin": "视觉艺术中心",
+    "lin-shi-zhuang-zhi": "临时装置",
+    "bo-wu-guan": "博物馆",
+    "bo-wu-guan-zhan-lan-guan-shi-nei-she-ji": "博物馆展览馆室内设计",
+    "zhan-chen-zhuang-zhi": "展陈装置",
+    "zhan-ting": "展厅",
+    "zhan-guan": "展馆"
+}
+search_categories = list(map(search_cat_d.get, search_categories))
+
+# Create Main Folder
+for value in search_cat_d.values():
+    os.makedirs(f"D:\\Users\\vadymk\\OneDrive - ODDITY Tech LTD\\ArchDaily\\{value}", exist_ok=True)
+    os.makedirs(f"D:\\Users\\vadymk\\PycharmProjects\pythonProject\\ArchDaily\\{value}", exist_ok=True)
+
+# Process
+with ThreadPoolExecutor(max_workers=4) as executor:
+    stack = list(tqdm(executor.map(task, urls, title, url_large, page_offices, page_author, search_categories),
+                      total=df.shape[0]))
