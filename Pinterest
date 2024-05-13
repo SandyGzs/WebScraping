@@ -1,0 +1,39 @@
+from json import loads
+import pandas as pd
+from DrissionPage import ChromiumPage, ChromiumOptions
+from tqdm import tqdm
+
+# Open
+co = ChromiumOptions().auto_port()
+co.headless()
+co.incognito()
+co.set_argument('--start-maximized')
+driver = ChromiumPage(co)
+
+# Login Page
+driver.get("https://www.pinterest.com/")
+if driver.wait.eles_loaded("@data-test-id:simple-login-button"):
+    driver.ele("@data-test-id:simple-login-button").ele("tag:button").click()
+    if driver.wait.eles_loaded(["tag:input@@id:email", "tag:input@@id:password", "@data-test-id:registerFormSubmitButton"]):
+        credentials = loads(open("credentials.json").read())
+        driver.ele("tag:input@@id:email").input(credentials["Email"])
+        driver.ele("tag:input@@id:password").input(credentials["Password"])
+        driver.ele("@data-test-id:registerFormSubmitButton").ele("tag:button").click()
+driver.wait(10)
+
+# Search Page
+loaded = driver.get("https://www.pinterest.com/search/pins/?q=展厅设计&rs=typed")
+
+# Start Browsing
+dfs = []
+for _ in tqdm(range(10)):
+    dfs.append(pd.DataFrame([
+        {
+            "alt": s_ele.s_ele("tag:img").alt,
+            "url": s_ele.s_ele("tag:a").href,
+            "pic": s_ele.s_ele("tag:img").srcset.split(",")[-1].split()[0]
+        } for s_ele in driver.s_eles("@role:listitem") if not s_ele.s_ele("tag:a@@aria-label:Promoted by")
+    ]))
+    driver.scroll.down(pixel=300)
+    driver.wait.eles_loaded("@role:listitem")
+pd.concat(dfs, ignore_index=True).drop_duplicates().to_csv("sample.csv", index=False)
